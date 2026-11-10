@@ -93,6 +93,62 @@ public final class CameraCaptureService: NSObject, AVCaptureVideoDataOutputSampl
         }
     }
 
+    /// 카메라를 켠 상태로 지정된 시간 동안 프레임을 연속 분석하여 첫 유효 결과를 즉시 반환 (콜드스타트 암전 프레임 자동 스킵)
+    public func scanFramesUntilMatch<T: Sendable>(
+        timeoutSeconds: Double = 2.2,
+        evaluator: @escaping @Sendable (CGImage, Float) -> T?
+    ) async throws -> T {
+        let hasPermission = await checkAndRequestPermission()
+        guard hasPermission else {
+            throw NSError(domain: "CameraCaptureService", code: -202, userInfo: [NSLocalizedDescriptionKey: "카메라 접근 권한이 거부되었습니다."])
+        }
+
+        return try await withCheckedThrowingContinuation { continuation in
+            let lock = NSLock()
+            var isCompleted = false
+            var lastEvaluatedTime: CFAbsoluteTime = 0
+
+            do {
+                try startCapture { [weak self] cgImage, brightness in
+                    let now = CFAbsoluteTimeGetCurrent()
+                    // 70ms 간격으로 프레임 평가 (초당 ~14프레임 고속 스캔, 카메라 재시작 오버헤드 0)
+                    guard now - lastEvaluatedTime >= 0.07 else { return }
+                    lastEvaluatedTime = now
+
+                    if let matched = evaluator(cgImage, brightness) {
+                        lock.lock()
+                        defer { lock.unlock() }
+                        guard !isCompleted else { return }
+                        isCompleted = true
+                        self?.stopCapture()
+                        continuation.resume(returning: matched)
+                    }
+                }
+            } catch {
+                lock.lock()
+                defer { lock.unlock() }
+                if !isCompleted {
+                    isCompleted = true
+                    continuation.resume(throwing: error)
+                }
+                return
+            }
+
+            captureQueue.asyncAfter(deadline: .now() + timeoutSeconds) { [weak self] in
+                lock.lock()
+                defer { lock.unlock() }
+                guard !isCompleted else { return }
+                isCompleted = true
+                self?.stopCapture()
+                continuation.resume(throwing: NSError(
+                    domain: "CameraCaptureService",
+                    code: -203,
+                    userInfo: [NSLocalizedDescriptionKey: "카메라 얼굴 감지 타임아웃 (\(timeoutSeconds)s)"]
+                ))
+            }
+        }
+    }
+
     /// 단일 프레임 스냅샷 캡처 (CLI / PAM 고속 인증용, 타임아웃 지원)
     public func captureSingleFrame(timeoutSeconds: Double = 1.5) async throws -> (CGImage, Float) {
         let hasPermission = await checkAndRequestPermission()

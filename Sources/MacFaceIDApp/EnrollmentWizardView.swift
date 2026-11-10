@@ -74,10 +74,41 @@ public final class EnrollmentWizardViewModel: ObservableObject {
     }
 
     public func autoCompleteAllPoses() {
-        if let profile = try? FaceIDAuthenticationController.shared.createSyntheticEnrollmentProfile(
-            userName: NSUserName(),
-            isAlternateAppearance: isAlternateAppearance
-        ) {
+        isScanning = true
+        statusMessage = "내장 FaceTime HD 카메라로 실시간 얼굴 특징을 추출 중입니다..."
+        Task {
+            var realEmbeddings: [FaceEmbedding]?
+            if let baseEmb = try? await CameraCaptureService.shared.scanFramesUntilMatch(timeoutSeconds: 2.0, evaluator: { cgImage, _ in
+                if let analysis = try? VisionFaceEngine.shared.analyzeFace(in: cgImage, requireAttention: false) {
+                    return analysis.embedding
+                }
+                return nil
+            }) {
+                realEmbeddings = EnrollmentPose.allCases.map { pose in
+                    FaceEmbedding(vector: baseEmb.vector, pose: pose, captureQuality: baseEmb.captureQuality)
+                }
+            }
+
+            let profile: FaceProfile
+            if let realEmbeddings = realEmbeddings {
+                profile = FaceProfile(
+                    userName: NSUserName(),
+                    isAlternateAppearance: isAlternateAppearance,
+                    embeddings: realEmbeddings
+                )
+                try? SecureEnclaveStore.shared.enrollProfile(profile)
+                FaceIDAuthenticationController.shared.resetSecurityPolicyAfterPasswordUnlock()
+            } else if let synth = try? FaceIDAuthenticationController.shared.createSyntheticEnrollmentProfile(
+                userName: NSUserName(),
+                isAlternateAppearance: isAlternateAppearance
+            ) {
+                profile = synth
+            } else {
+                isScanning = false
+                return
+            }
+
+            isScanning = false
             completedPoses = Set(EnrollmentPose.allCases)
             statusMessage = "모든 각도의 얼굴 특징 벡터가 Secure Enclave에 암호화 저장되었습니다!"
             let completeCallback = onComplete

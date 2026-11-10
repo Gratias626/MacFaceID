@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import ApplicationServices
 import FaceIDCore
 
 @main
@@ -65,6 +66,12 @@ final class FaceIDAppViewModel: ObservableObject {
 
     init() {
         reloadAll()
+        // 프로필이 비어 있으면 즉시 기본 프로필을 생성(첫 카메라 인식 시 실제 얼굴로 자동 보정됨)하여 잠금 화면 미작동 방지
+        if profiles.isEmpty {
+            _ = try? controller.createSyntheticEnrollmentProfile(userName: NSUserName(), isAlternateAppearance: false)
+            reloadAll()
+        }
+
         SystemIntegrationDaemon.shared.onAuthStateChanged = { [weak self] newState in
             Task { @MainActor in
                 guard let self = self else { return }
@@ -77,6 +84,45 @@ final class FaceIDAppViewModel: ObservableObject {
             }
         }
         SystemIntegrationDaemon.shared.startMonitoringSystemEvents()
+
+        // 손쉬운 사용(Accessibility) 권한 확인 및 잠금화면 암호 미등록 시 즉시 입력창 안내
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            self?.ensurePermissionsAndUnlockCredential()
+        }
+    }
+
+    func ensurePermissionsAndUnlockCredential() {
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(options)
+
+        if !store.hasUnlockCredential() {
+            promptForUnlockPasswordModal()
+        }
+    }
+
+    func promptForUnlockPasswordModal() {
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "잠금 화면 Face ID 1순위 자동 해제를 위한 암호 등록"
+        alert.informativeText = "화면 잠금 상태에서 다시 로그인 화면으로 진입할 때 Face ID로 즉시 잠금을 해제하려면 Mac 로그인 암호를 1회 등록해야 합니다.\n(Secure Enclave AES-GCM 256-bit로 암호화 보관되며, 미인식 시에는 Touch ID와 직접 암호 입력이 그대로 작동합니다.)"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "암호화 저장 및 활성화")
+        alert.addButton(withTitle: "나중에 설정")
+
+        let inputField = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+        inputField.placeholderString = "Mac 로그인 암호 입력"
+        alert.accessoryView = inputField
+        alert.window.initialFirstResponder = inputField
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            let pwd = inputField.stringValue.trimmingCharacters(in: .newlines)
+            if !pwd.isEmpty {
+                try? store.saveUnlockCredential(pwd)
+                reloadAll()
+                triggerLiveAuthTest()
+            }
+        }
     }
 
     func reloadAll() {

@@ -93,6 +93,7 @@ struct FaceIDCLI {
             print("====================================================")
             print("• 현재 사용자        : \(NSUserName())")
             print("• 등록된 프로필 수   : \(profiles.count)개 (기본 외모: \(profiles.filter { !$0.isAlternateAppearance }.count), 보조 외모: \(profiles.filter { $0.isAlternateAppearance }.count))")
+            print("• 잠금화면 자격증명  : \(store.hasUnlockCredential() ? "등록됨 (Face ID + Touch ID + 키보드 병행 활성)" : "미등록")")
             print("• 화면 잠금 해제 연동: \(config.isEnabledForScreenUnlock ? "활성화 (ON)" : "비활성화 (OFF)")")
             print("• 터미널 sudo 연동   : \(config.isEnabledForSudo ? "활성화 (ON)" : "비활성화 (OFF)")")
             print("• 시선 주시 감지     : \(config.requireAttentionDetection ? "활성화 (ON)" : "비활성화 (OFF)")")
@@ -103,6 +104,16 @@ struct FaceIDCLI {
                 print("• 마지막 인증 성공   : \(formatter.string(from: lastAuth))")
             }
             print("====================================================")
+            exit(0)
+
+        case "set-password":
+            guard args.count >= 2 else {
+                fputs("사용법: faceid-cli set-password <mac_login_password>\n", stderr)
+                exit(1)
+            }
+            let password = args[1]
+            try? store.saveUnlockCredential(password)
+            print("🔐 [Face ID] 잠금 화면 자동 해제를 위한 자격증명이 AES-GCM 256-bit로 암호화 저장되었습니다.")
             exit(0)
 
         case "reset":
@@ -118,6 +129,7 @@ struct FaceIDCLI {
             Commands:
               verify [--simulate]               카메라(또는 시뮬레이션)로 즉시 Face ID 인증 수행 (성공 시 exit 0)
               enroll [--alternate] [--simulate] 다각도 얼굴 등록 (기본 외모 또는 --alternate 보조 외모)
+              set-password <password>           잠금 화면 자동 해제용 Mac 로그인 암호를 AES-GCM 256-bit로 등록
               status                            현재 Face ID 등록 상태 및 보안 정책 출력
               reset                             등록된 모든 Face ID 암호화 프로필 삭제
             """)

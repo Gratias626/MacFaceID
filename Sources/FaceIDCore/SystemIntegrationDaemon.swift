@@ -89,9 +89,21 @@ public final class SystemIntegrationDaemon: @unchecked Sendable {
         }
     }
 
+    /// 현재 macOS 세션이 잠금 화면(Lock Screen) 상태인지 실시간 확인
+    public func isMacScreenLocked() -> Bool {
+        if isScreenCurrentlyLocked {
+            return true
+        }
+        if let sessionDict = CGSessionCopyCurrentDictionary() as? [String: Any],
+           let locked = sessionDict["CGSSessionScreenIsLocked"] as? Bool {
+            return locked
+        }
+        return false
+    }
+
     /// 사용자가 키보드를 직접 타이핑 중이 아니고 화면이 잠겨 있을 때만 저장된 암호화 자격증명으로 잠금 화면 자동 해제
     private func submitUnlockCredentialIfScreenLockedAndIdle() {
-        guard isScreenCurrentlyLocked else { return }
+        guard isMacScreenLocked() else { return }
         // 최근 2.0초 이내 키보드 입력이 있었다면 사용자가 직접 암호를 입력 중이므로 간섭하지 않음
         let secondsSinceKeyPress = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .keyDown)
         guard secondsSinceKeyPress > 2.0 else { return }

@@ -57,6 +57,8 @@ final class FaceIDAppViewModel: ObservableObject {
     @Published var showingPrimaryEnrollment: Bool = false
     @Published var showingAlternateEnrollment: Bool = false
     @Published var lowLightAssistActive: Bool = false
+    @Published var hasSavedUnlockCredential: Bool = false
+    @Published var unlockPasswordInput: String = ""
 
     private let store = SecureEnclaveStore.shared
     private let controller = FaceIDAuthenticationController.shared
@@ -80,6 +82,15 @@ final class FaceIDAppViewModel: ObservableObject {
     func reloadAll() {
         profiles = (try? store.loadProfiles()) ?? []
         config = store.loadConfiguration()
+        hasSavedUnlockCredential = store.hasUnlockCredential()
+    }
+
+    func saveUnlockPassword() {
+        let trimmed = unlockPasswordInput.trimmingCharacters(in: .newlines)
+        guard !trimmed.isEmpty else { return }
+        try? store.saveUnlockCredential(trimmed)
+        unlockPasswordInput = ""
+        hasSavedUnlockCredential = store.hasUnlockCredential()
     }
 
     func saveConfig() {
@@ -230,6 +241,30 @@ struct MainSettingsView: View {
                             viewModel.showingAlternateEnrollment = true
                         }
                         .disabled(!hasPrimaryFace)
+                    }
+
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("잠금 화면 하이브리드 자격증명 (Face ID + Touch ID + 키보드 동시 사용)")
+                                .font(.system(size: 13, weight: .semibold))
+                            Spacer()
+                            Text(viewModel.hasSavedUnlockCredential ? "AES-GCM 등록 완료" : "미등록")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(viewModel.hasSavedUnlockCredential ? .green : .orange)
+                        }
+                        Text("맥 잠금 화면에서 얼굴 인식 성공 시 자동으로 잠금을 풀기 위한 Mac 로그인 암호입니다. 미인식 시에는 Touch ID 및 직접 키보드 입력이 그대로 작동합니다.")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                        HStack(spacing: 8) {
+                            SecureField("Mac 로그인 암호 입력 (AES-GCM 256-bit 암호화 보관)", text: $viewModel.unlockPasswordInput)
+                                .textFieldStyle(.roundedBorder)
+                            Button(viewModel.hasSavedUnlockCredential ? "암호 변경" : "암호 저장") {
+                                viewModel.saveUnlockPassword()
+                            }
+                            .disabled(viewModel.unlockPasswordInput.isEmpty)
+                        }
                     }
                 }
                 .padding(10)

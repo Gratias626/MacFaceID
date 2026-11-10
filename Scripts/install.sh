@@ -25,6 +25,7 @@ sudo cp "$DIST_DIR/pam/pam_faceid.so" /usr/local/lib/pam/pam_faceid.so
 sudo chmod 755 /usr/local/lib/pam/pam_faceid.so
 
 sudo cp -R "$DIST_DIR/AuthPlugin/FaceIDAuthPlugin.bundle" /Library/Security/SecurityAgentPlugins/
+sudo cp -R "$DIST_DIR/MacFaceID.app" /Applications/
 
 if [ -f /etc/pam.d/sudo_local ]; then
     if ! grep -q "pam_faceid.so" /etc/pam.d/sudo_local; then

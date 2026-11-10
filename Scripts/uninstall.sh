@@ -17,6 +17,7 @@ fi
 sudo rm -f /usr/local/lib/pam/pam_faceid.so
 sudo rm -f /usr/local/bin/faceid-cli
 sudo rm -rf /Library/Security/SecurityAgentPlugins/FaceIDAuthPlugin.bundle
+sudo rm -rf /Applications/MacFaceID.app
 
 echo "✅ MacFaceID 시스템 모듈이 안전하게 제거되었습니다."
 

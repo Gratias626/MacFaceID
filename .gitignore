@@ -1,0 +1,15 @@
+# macOS & Xcode
+.DS_Store
+.build/
+*.xcodeproj
+*.xcworkspace
+DerivedData/
+
+# Local encrypted Face ID store & keys (never commit biometric embeddings or master keys)
+.macfaceid_store/
+.macfaceid/
+*.enc
+.master_key
+
+# Build artifacts
+dist/

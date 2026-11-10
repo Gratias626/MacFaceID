@@ -11,6 +11,7 @@ public final class SecureEnclaveStore: @unchecked Sendable {
     private let profilesFileURL: URL
     private let configFileURL: URL
     private let securityStateFileURL: URL
+    private let unlockCredentialFileURL: URL
     private let keychainService = "com.macfaceid.goldengate.securestore"
     private let keychainAccount = "faceid_master_key_v1"
     private let lock = NSLock()
@@ -39,7 +40,14 @@ public final class SecureEnclaveStore: @unchecked Sendable {
         } else {
             let home = FileManager.default.homeDirectoryForCurrentUser
             let defaultDir = home.appendingPathComponent(".macfaceid", isDirectory: true)
-            if (try? FileManager.default.createDirectory(at: defaultDir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])) != nil {
+            let probeURL = defaultDir.appendingPathComponent(".write_probe")
+            var canUseDefault = false
+            if (try? FileManager.default.createDirectory(at: defaultDir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])) != nil,
+               (try? Data().write(to: probeURL, options: .atomic)) != nil {
+                try? FileManager.default.removeItem(at: probeURL)
+                canUseDefault = true
+            }
+            if canUseDefault {
                 self.storageDirectory = defaultDir
             } else {
                 // 샌드박스 또는 제한된 데몬 환경에서도 항상 안전하게 동작하도록 현재 작업 디렉터리 하위 .macfaceid_store 사용
@@ -51,6 +59,7 @@ public final class SecureEnclaveStore: @unchecked Sendable {
         self.profilesFileURL = storageDirectory.appendingPathComponent("enrolled_profiles.enc")
         self.configFileURL = storageDirectory.appendingPathComponent("config.json")
         self.securityStateFileURL = storageDirectory.appendingPathComponent("security_state.json")
+        self.unlockCredentialFileURL = storageDirectory.appendingPathComponent("unlock_credential.enc")
 
         try? FileManager.default.createDirectory(
             at: storageDirectory,
@@ -166,6 +175,37 @@ public final class SecureEnclaveStore: @unchecked Sendable {
         if FileManager.default.fileExists(atPath: profilesFileURL.path) {
             try FileManager.default.removeItem(at: profilesFileURL)
         }
+        if FileManager.default.fileExists(atPath: unlockCredentialFileURL.path) {
+            try? FileManager.default.removeItem(at: unlockCredentialFileURL)
+        }
+    }
+
+    // MARK: - 잠금 화면 자동 해제를 위한 AES-GCM 256-bit 로그인 자격증명 보관
+
+    public func saveUnlockCredential(_ password: String) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let plainData = password.data(using: .utf8) else { return }
+        let encrypted = try encryptData(plainData)
+        try encrypted.write(to: unlockCredentialFileURL, options: .atomic)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: unlockCredentialFileURL.path)
+    }
+
+    public func loadUnlockCredential() -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard FileManager.default.fileExists(atPath: unlockCredentialFileURL.path),
+              let encrypted = try? Data(contentsOf: unlockCredentialFileURL),
+              let plainData = try? decryptData(encrypted) else {
+            return nil
+        }
+        return String(data: plainData, encoding: .utf8)
+    }
+
+    public func hasUnlockCredential() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return FileManager.default.fileExists(atPath: unlockCredentialFileURL.path)
     }
 
     // MARK: - 환경설정 및 보안 정책 상태 관리

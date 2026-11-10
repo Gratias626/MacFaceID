@@ -54,15 +54,17 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc, cons
     if (WIFEXITED(status)) {
         int exit_code = WEXITSTATUS(status);
         if (exit_code == 0) {
-            /* Face ID 인증 성공 -> 즉시 sudo 승인 (Touch ID와 동일) */
+            /* Face ID 인증 성공 -> 즉시 승인 (Touch ID와 동일) */
             return PAM_SUCCESS;
-        } else if (exit_code == 2) {
-            /* 5회 실패 / 재부팅 후 최초 / 48시간 경과 -> 암호/Touch ID로 즉시 Fallback */
-            return PAM_IGNORE;
         }
     }
 
-    return PAM_AUTH_ERR;
+    /*
+     * Face ID 미인식, 타임아웃, 또는 보안 정책(5회 실패/재부팅/48시간 경과) 시
+     * PAM_IGNORE를 반환하여 다음 모듈인 Touch ID(pam_tid.so) 및
+     * 직접 키보드 암호 입력(pam_opendirectory.so)이 즉시 함께 작동하도록 보장
+     */
+    return PAM_IGNORE;
 }
 
 PAM_EXTERN int pam_sm_setcred(pam_handle_t *pamh, int flags, int argc, const char **argv) {

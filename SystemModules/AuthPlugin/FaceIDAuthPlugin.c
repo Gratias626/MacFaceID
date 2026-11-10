@@ -45,7 +45,13 @@ static OSStatus MechanismInvoke(AuthorizationMechanismRef inMechanism) {
     }
 
     const char *cli_path = "/usr/local/bin/faceid-cli";
-    AuthorizationResult result = kAuthorizationResultUserCanceled;
+    /*
+     * 기본값을 Allow(Non-blocking Pass-through)로 설정하여,
+     * Face ID가 실패하거나 카메라에 얼굴이 없더라도 후속 메커니즘인
+     * loginwindow:login (Touch ID 지문 인식 + 키보드 암호 직접 입력)이
+     * 절대 차단되거나 취소되지 않고 함께 작동하도록 보장합니다.
+     */
+    AuthorizationResult result = kAuthorizationResultAllow;
 
     if (access(cli_path, X_OK) == 0) {
         pid_t pid = fork();
@@ -55,8 +61,15 @@ static OSStatus MechanismInvoke(AuthorizationMechanismRef inMechanism) {
         } else if (pid > 0) {
             int status = 0;
             if (waitpid(pid, &status, 0) > 0 && WIFEXITED(status) && WEXITSTATUS(status) == 0) {
-                /* Face ID 얼굴 인식 성공 -> 잠금 화면 즉시 해제 승인 */
-                result = kAuthorizationResultAllow;
+                /* Face ID 얼굴 인식 성공 -> SecurityAgent 컨텍스트에 인증 완료 플래그 기록 */
+                const char *verified_val = "true";
+                AuthorizationValue val = { strlen(verified_val), (void *)verified_val };
+                mech->plugin->callbacks->SetContextValue(
+                    mech->engine,
+                    "com.macfaceid.verified",
+                    kAuthorizationContextFlagExtractable,
+                    &val
+                );
             }
         }
     }

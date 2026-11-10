@@ -37,6 +37,9 @@ struct TestRunner {
         assert(loaded.count == 1, "암호화 저장 후 1개의 프로필이 로드되어야 합니다.")
         assert(loaded.first?.embeddings.count == EnrollmentPose.allCases.count, "5방향 포즈 임베딩이 모두 복호화되어야 합니다.")
         assert(loaded.first?.embeddings.first?.vector == enrolled.embeddings.first?.vector, "AES-GCM 복호화 후 벡터가 일치해야 합니다.")
+        try store.saveUnlockCredential("TestLockScreenPass!2026")
+        assert(store.hasUnlockCredential(), "잠금 화면 자동 해제 자격증명이 암호화 저장되어야 합니다.")
+        assert(store.loadUnlockCredential() == "TestLockScreenPass!2026", "잠금 화면 자격증명 복호화 결과가 일치해야 합니다.")
         print("  ✅ [Test 2/5] Secure Enclave AES-GCM 256-bit 암호화 저장소 무결성 검증 통과")
 
         // 3. 기본 외모 + 보조 외모(Alternate Appearance) 등록 및 초고속(500ms 이하) 인증 검증

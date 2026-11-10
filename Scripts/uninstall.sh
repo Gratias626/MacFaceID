@@ -10,6 +10,10 @@ if [ -f /etc/pam.d/sudo_local ]; then
     sudo sed -i '' '/pam_faceid.so/d' /etc/pam.d/sudo_local
 fi
 
+if [ -f /etc/pam.d/screensaver ]; then
+    sudo sed -i '' '/pam_faceid.so/d' /etc/pam.d/screensaver
+fi
+
 sudo rm -f /usr/local/lib/pam/pam_faceid.so
 sudo rm -f /usr/local/bin/faceid-cli
 sudo rm -rf /Library/Security/SecurityAgentPlugins/FaceIDAuthPlugin.bundle

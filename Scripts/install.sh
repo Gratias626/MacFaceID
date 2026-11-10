@@ -31,8 +31,16 @@ if [ -f /etc/pam.d/sudo_local ]; then
         echo "auth       sufficient     /usr/local/lib/pam/pam_faceid.so" | sudo tee -a /etc/pam.d/sudo_local > /dev/null
     fi
 else
-    echo "# sudo_local: local customizations for sudo (Face ID = Touch ID)" | sudo tee /etc/pam.d/sudo_local > /dev/null
+    echo "# sudo_local: local customizations for sudo (Face ID + Touch ID + Password)" | sudo tee /etc/pam.d/sudo_local > /dev/null
     echo "auth       sufficient     /usr/local/lib/pam/pam_faceid.so" | sudo tee -a /etc/pam.d/sudo_local > /dev/null
+    echo "auth       sufficient     pam_tid.so" | sudo tee -a /etc/pam.d/sudo_local > /dev/null
+fi
+
+if [ -f /etc/pam.d/screensaver ]; then
+    if ! grep -q "pam_faceid.so" /etc/pam.d/screensaver; then
+        sudo cp /etc/pam.d/screensaver /etc/pam.d/screensaver.bak
+        sudo awk 'NR==1{print; print "auth       sufficient     /usr/local/lib/pam/pam_faceid.so"; next}1' /etc/pam.d/screensaver.bak | sudo tee /etc/pam.d/screensaver > /dev/null
+    fi
 fi
 
 echo "✅ MacFaceID 설치가 완료되었습니다! 이제 터미널 sudo 및 잠금 해제 시 Face ID가 작동합니다."

@@ -7,15 +7,26 @@ set -e
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DIST_DIR="$PROJECT_ROOT/dist"
 
-if [ ! -f "$DIST_DIR/bin/faceid-cli" ]; then
+if [ ! -f "$DIST_DIR/bin/faceid-cli" ] || [ ! -d "$DIST_DIR/MacFaceID.app" ]; then
     echo "📦 빌드 산출물이 없어 먼저 빌드를 수행합니다..."
     "$PROJECT_ROOT/Scripts/build_and_package.sh"
 fi
 
 echo "🚀 [1/2] MacFaceID.app 응용 프로그램 및 로그인 자동 실행(LaunchAgent) 설치 중..."
 
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+if [ -x "$LSREGISTER" ] && [ -d "$DIST_DIR/MacFaceID.app" ]; then
+    "$LSREGISTER" -u "$DIST_DIR/MacFaceID.app" 2>/dev/null || true
+fi
+
 rm -rf /Applications/MacFaceID.app
 cp -R "$DIST_DIR/MacFaceID.app" /Applications/MacFaceID.app
+# dist 폴더 내 중복 .app 번들을 제거하여 Launchpad/Spotlight에 앱이 2개로 잡히는 현상 방지
+rm -rf "$DIST_DIR/MacFaceID.app"
+
+if [ -x "$LSREGISTER" ]; then
+    "$LSREGISTER" -f /Applications/MacFaceID.app 2>/dev/null || true
+fi
 
 LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 mkdir -p "$LAUNCH_AGENTS_DIR"

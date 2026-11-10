@@ -4,9 +4,10 @@ MacBook Air M2의 내장 1080p FaceTime HD 카메라와 Apple M2 Neural Engine(`
 
 ## 주요 기능
 
-1. **Touch ID = Face ID 시스템 인증 통합**
-   - **Mac 잠금 해제**: `SecurityAgent` 기반 Authorization Plugin (`FaceIDAuthPlugin.bundle`) 및 `NSWorkspace` 슬립 깨우기 감지 연동
-   - **터미널 `sudo` 권한 승격**: Custom PAM 모듈 (`pam_faceid.so`)을 통해 `pam_tid.so`(Touch ID)와 동일한 즉시 인증 제공
+1. **Touch ID = Face ID 시스템 인증 통합 (1순위 Face ID 최우선 + Touch ID·암호 병행)**
+   - **잠금 화면 1순위 선제 해제**: 화면 깨우기 및 잠금 화면 진입 시 **1순위 Face ID**가 가장 먼저 선제 작동하며, 미인식 시 차단 없이 **2순위 Touch ID → 3순위 키보드 암호 입력**으로 자연스럽게 이어지는 하이브리드 구조 제공
+   - **Mac 잠금 해제**: `SecurityAgent` 기반 Authorization Plugin (`FaceIDAuthPlugin.bundle`), `/etc/pam.d/screensaver` 및 `NSWorkspace` 슬립 깨우기 감지 연동
+   - **터미널 `sudo` 권한 승격**: Custom PAM 모듈 (`pam_faceid.so`)을 최상단(1순위)에 배치하여 `pam_tid.so`(Touch ID) 및 암호 입력과 함께 즉시 인증 제공
 2. **iPhone Face ID 스타일 UI/UX**
    - **원형 3D 다각도 스캔 마법사**: 정면·좌·우·상·하 5방향 얼굴 특징 벡터 등록 및 보조 외모(Alternate Appearance) 지원
    - **Dynamic Notch HUD**: MacBook Air M2 상단 노치 하단에 플로팅 캡슐 애니메이션 및 저조도 화면 보조 조명(Face Illumination) 표시
@@ -37,7 +38,11 @@ MacBook Air M2의 내장 1080p FaceTime HD 카메라와 Apple M2 Neural Engine(`
 # 3. GUI 앱 실행
 open ./dist/MacFaceID.app
 
-# 4. CLI 상태 확인 및 인증 테스트
+# 4. CLI 상태 확인, 잠금화면 자격증명 등록 및 인증 테스트
 ./dist/bin/faceid-cli status
+./dist/bin/faceid-cli set-password "<mac_login_password>"
 ./dist/bin/faceid-cli verify
+
+# 5. 시스템 전체 설치 (/Applications/MacFaceID.app + PAM + SecurityAgent 플러그인)
+./Scripts/install.sh
 ```

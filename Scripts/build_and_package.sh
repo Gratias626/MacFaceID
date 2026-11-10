@@ -75,9 +75,32 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<EOF
     <string>Touch ID를 대체하여 Mac 잠금 해제 및 sudo 권한 승인을 위해 내장 FaceTime HD 카메라로 얼굴을 인식합니다.</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>LSUIElement</key>
+    <true/>
 </dict>
 </plist>
 EOF
+
+ENTITLEMENTS_PLIST="$BUILD_DIR/Entitlements.plist"
+cat > "$ENTITLEMENTS_PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.device.camera</key>
+    <true/>
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>
+EOF
+
+codesign --force --sign - "$APP_BUNDLE/Contents/MacOS/libFaceIDCore.dylib"
+codesign --force --deep --sign - --entitlements "$ENTITLEMENTS_PLIST" "$APP_BUNDLE"
+codesign --force --sign - "$BUILD_DIR/bin/libFaceIDCore.dylib"
+codesign --force --sign - --entitlements "$ENTITLEMENTS_PLIST" "$BUILD_DIR/bin/faceid-cli"
 
 swiftc -O -parse-as-library \
     -module-cache-path "$CLANG_MODULE_CACHE_PATH" \

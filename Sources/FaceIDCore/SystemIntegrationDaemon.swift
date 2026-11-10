@@ -14,6 +14,7 @@ public final class SystemIntegrationDaemon: @unchecked Sendable {
     private var distributedObservers: [NSObjectProtocol] = []
     private var isScreenCurrentlyLocked: Bool = false
     private var isScanningLockScreen: Bool = false
+    private var lastLockScreenScanTime: CFAbsoluteTime = 0
     private var lockScreenPriorityTimer: Timer?
     private var backgroundActivity: NSObjectProtocol?
     public var onAuthStateChanged: ((AuthenticationState) -> Void)?
@@ -26,44 +27,40 @@ public final class SystemIntegrationDaemon: @unchecked Sendable {
         self.store = store
     }
 
-    /// 시스템 슬립 깨우기(Wake from Sleep) 및 화면 잠금 이벤트 모니터링 시작
+    /// 시스템 슬립 깨우기(Wake from Sleep) 및 화면 잠금 이벤트 모니터링 시작 (평상시 CPU 0% Zero-Polling)
     public func startMonitoringSystemEvents() {
         stopMonitoringSystemEvents()
 
-        // 잠금 화면(loginwindow) 진입 시에도 macOS App Nap에 의해 백그라운드 스캔이 멈추지 않도록 프로세스 활성 유지
-        backgroundActivity = ProcessInfo.processInfo.beginActivity(
-            options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical],
-            reason: "MacFaceID Lock Screen Priority Authentication"
-        )
-
         let wsCenter = NSWorkspace.shared.notificationCenter
 
-        // 1. 맥북 덮개를 열거나 슬립에서 깨어날 때 Touch ID / 키보드 입력보다 먼저 1순위로 Face ID 스캔 트리거
+        // 1. 맥북 덮개를 열거나 슬립에서 깨어날 때 잠금 상태이면 즉시 1순위로 Face ID 스캔 트리거
         let wakeObserver = wsCenter.addObserver(
             forName: NSWorkspace.didWakeNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.wakeDisplayForLockScreen()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                self?.triggerParallelFaceIDUnlockIfNeeded()
+            guard let self = self, self.isMacScreenLocked() else { return }
+            self.wakeDisplayForLockScreen()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                self.triggerParallelFaceIDUnlockIfNeeded()
             }
         }
 
-        // 2. 디스플레이가 다시 켜질 때 1순위 Face ID 트리거
+        // 2. 디스플레이가 다시 켜질 때 잠금 상태이면 1순위 Face ID 트리거
         let screenWakeObserver = wsCenter.addObserver(
             forName: NSWorkspace.screensDidWakeNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                self?.triggerParallelFaceIDUnlockIfNeeded()
+            guard let self = self, self.isMacScreenLocked() else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                self.triggerParallelFaceIDUnlockIfNeeded()
             }
         }
 
         workspaceObservers.append(contentsOf: [wakeObserver, screenWakeObserver])
 
-        // 3. macOS 화면 잠금/해제 DistributedNotification 감지 (잠금 진입 즉시 1순위 Face ID 선제 작동)
+        // 3. macOS 화면 잠금/해제 DistributedNotification 감지 (오직 잠금 중에만 타이머/액티비티 활성화 -> 평상시 리소스 0%)
         let distCenter = DistributedNotificationCenter.default()
         let lockObserver = distCenter.addObserver(
             forName: NSNotification.Name("com.apple.screenIsLocked"),
@@ -74,14 +71,14 @@ public final class SystemIntegrationDaemon: @unchecked Sendable {
             self.isScreenCurrentlyLocked = true
             self.onAuthStateChanged?(.scanning)
             self.startLockScreenPriorityMonitor()
-            // 잠금 화면 진입 직후(0.7초 후 로그인 입력창이 준비된 즉시) 자동으로 1순위 Face ID 스캔 시작
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
+            // 잠금 화면 진입 직후(0.65초 후 로그인 입력창이 준비된 즉시) 자동으로 1순위 Face ID 스캔 시작
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.65) { [weak self] in
                 guard let self = self, self.isMacScreenLocked() else { return }
                 self.triggerParallelFaceIDUnlockIfNeeded()
             }
         }
 
-        // 사용자가 Touch ID 또는 키보드 암호 직접 입력으로 잠금을 해제한 경우 -> 즉시 보안 정책 카운터(5회 실패/48시간 타이머) 리셋
+        // 잠금 해제 완료 즉시 모든 타이머 및 백그라운드 액티비티 해제 -> 평상시 CPU 0.0% 복귀
         let unlockObserver = distCenter.addObserver(
             forName: NSNotification.Name("com.apple.screenIsUnlocked"),
             object: nil,
@@ -90,16 +87,14 @@ public final class SystemIntegrationDaemon: @unchecked Sendable {
             guard let self = self else { return }
             self.isScreenCurrentlyLocked = false
             self.stopLockScreenPriorityMonitor()
+            CameraCaptureService.shared.stopCapture()
             self.authController.resetSecurityPolicyAfterPasswordUnlock()
             self.onAuthStateChanged?(.idle)
         }
         distributedObservers.append(contentsOf: [lockObserver, unlockObserver])
 
-        // 상시 잠금 화면 감시 타이머 시작 (알림 누락 대비 + 잠금 화면에서 마우스/키보드 조작 시 즉시 Face ID 재가동)
-        startLockScreenPriorityMonitor()
-
-        // 4. 부재 시 자동 화면 잠금 (Auto-Lock on Walk Away) 타이머 모니터링
-        startWalkAwayAutoLockTimerIfNeeded()
+        // 4. 부재 시 자동 화면 잠금 옵션이 켜져 있을 때만 타이머 등록
+        updateWalkAwayAutoLockTimer()
     }
 
     /// 실제 물리 입력(키보드/트랙패드/마우스/스크롤) 이후 경과 시간(초) 반환
@@ -113,18 +108,29 @@ public final class SystemIntegrationDaemon: @unchecked Sendable {
         }.min() ?? 9999.0
     }
 
-    /// 잠금 화면이 활성화된 동안 사용자 접근(키보드 깨우기/트랙패드 이동) 시 Touch ID·암호 입력보다 먼저 Face ID를 1순위로 즉시 실행
+    /// 오직 화면이 잠겨 있는 동안에만 활성화되는 경량 깨우기 감지기 (잠금 해제 시 즉시 메모리/타이머 반환)
     private func startLockScreenPriorityMonitor() {
         stopLockScreenPriorityMonitor()
+        let config = store.loadConfiguration()
+        guard config.isEnabledForScreenUnlock else { return }
 
-        let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+        backgroundActivity = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical],
+            reason: "MacFaceID Active Lock Screen Session"
+        )
+
+        let timer = Timer(timeInterval: 0.7, repeats: true) { [weak self] _ in
             guard let self = self else { return }
-            let config = self.store.loadConfiguration()
-            guard config.isEnabledForScreenUnlock else { return }
-            guard self.isMacScreenLocked(), !self.isScanningLockScreen else { return }
+            guard self.isMacScreenLocked() else {
+                self.stopLockScreenPriorityMonitor()
+                return
+            }
+            guard !self.isScanningLockScreen else { return }
+            let now = CFAbsoluteTimeGetCurrent()
+            // 스캔 쿨다운(2.8초)을 적용하여 불필요한 연속 카메라 가동 방지
+            guard now - self.lastLockScreenScanTime >= 2.8 else { return }
 
-            // 잠금 화면 상태에서 사용자가 마우스/트랙패드를 움직이거나 아무 키를 눌러 로그인 화면으로 진입할 때 즉시 Face ID 실행
-            if self.secondsSinceLastUserInput() < 1.5 {
+            if self.secondsSinceLastUserInput() < 1.2 {
                 self.triggerParallelFaceIDUnlockIfNeeded()
             }
         }
@@ -135,12 +141,16 @@ public final class SystemIntegrationDaemon: @unchecked Sendable {
     private func stopLockScreenPriorityMonitor() {
         lockScreenPriorityTimer?.invalidate()
         lockScreenPriorityTimer = nil
+        if let activity = backgroundActivity {
+            ProcessInfo.processInfo.endActivity(activity)
+            backgroundActivity = nil
+        }
     }
 
     private func wakeDisplayForLockScreen() {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/caffeinate")
-        proc.arguments = ["-u", "-t", "4"]
+        proc.arguments = ["-u", "-t", "3"]
         try? proc.run()
     }
 
@@ -149,6 +159,7 @@ public final class SystemIntegrationDaemon: @unchecked Sendable {
         let config = store.loadConfiguration()
         guard config.isEnabledForScreenUnlock, !isScanningLockScreen else { return }
         isScanningLockScreen = true
+        lastLockScreenScanTime = CFAbsoluteTimeGetCurrent()
 
         Task(priority: .high) {
             defer { self.isScanningLockScreen = false }
@@ -233,15 +244,19 @@ public final class SystemIntegrationDaemon: @unchecked Sendable {
 
     private var walkAwayTimer: Timer?
 
-    private func startWalkAwayAutoLockTimerIfNeeded() {
+    /// 자리 비움 자동 잠금 옵션이 켜져 있을 때만 타이머를 등록하고, 꺼져 있으면 타이머를 완전히 제거(Zero-Polling)
+    public func updateWalkAwayAutoLockTimer() {
         walkAwayTimer?.invalidate()
+        walkAwayTimer = nil
+        let config = store.loadConfiguration()
+        guard config.autoLockOnWalkAway else { return }
+
         walkAwayTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
-            let config = self.store.loadConfiguration()
-            guard config.autoLockOnWalkAway else { return }
+            let currentConfig = self.store.loadConfiguration()
+            guard currentConfig.autoLockOnWalkAway, !self.isMacScreenLocked() else { return }
 
             Task {
-                // 카메라로 사용자 재석 여부 경량 확인
                 if let (cgImage, _) = try? await CameraCaptureService.shared.captureSingleFrame(timeoutSeconds: 1.0) {
                     let faceDetected = (try? VisionFaceEngine.shared.analyzeFace(in: cgImage, requireAttention: false)) != nil
                     if !faceDetected {
@@ -261,6 +276,7 @@ public final class SystemIntegrationDaemon: @unchecked Sendable {
     }
 
     public func stopMonitoringSystemEvents() {
+        stopLockScreenPriorityMonitor()
         walkAwayTimer?.invalidate()
         walkAwayTimer = nil
 

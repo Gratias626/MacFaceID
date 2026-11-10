@@ -149,7 +149,6 @@ public final class FaceIDAuthenticationController: @unchecked Sendable {
         }
 
         let config = store.loadConfiguration()
-        var lastFailureState: AuthenticationState?
 
         do {
             let matchedState: AuthenticationState = try await cameraService.scanFramesUntilMatch(timeoutSeconds: 2.2) { [weak self] cgImage, _ in
@@ -189,7 +188,6 @@ public final class FaceIDAuthenticationController: @unchecked Sendable {
                 case .fallbackRequired:
                     return result
                 case .failed:
-                    lastFailureState = result
                     return nil
                 default:
                     return nil
@@ -197,10 +195,7 @@ public final class FaceIDAuthenticationController: @unchecked Sendable {
             }
             return matchedState
         } catch {
-            if let lastFailureState = lastFailureState {
-                return lastFailureState
-            }
-            return .failed(reason: "카메라에서 얼굴을 감지할 수 없습니다.", consecutiveFailures: store.loadSecurityState().consecutiveFailures)
+            return .failed(reason: "카메라에서 등록된 얼굴을 확인할 수 없습니다.", consecutiveFailures: store.loadSecurityState().consecutiveFailures)
         }
     }
 

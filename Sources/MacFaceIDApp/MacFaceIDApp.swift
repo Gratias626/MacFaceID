@@ -3,38 +3,89 @@ import AppKit
 import ApplicationServices
 import FaceIDCore
 
-@main
-struct MacFaceIDApp: App {
-    @ObservedObject private var appViewModel = FaceIDAppViewModel.shared
+@MainActor
+final class SettingsWindowController: NSObject, NSWindowDelegate {
+    static let shared = SettingsWindowController()
+    private var settingsWindow: NSWindow?
 
-    init() {
-        DispatchQueue.main.async {
-            NSApplication.shared.setActivationPolicy(.regular)
+    func showSettingsWindow() {
+        NSApplication.shared.setActivationPolicy(.accessory)
+        if let existing = settingsWindow {
+            existing.makeKeyAndOrderFront(nil)
             NSApplication.shared.activate(ignoringOtherApps: true)
-            for window in NSApplication.shared.windows {
-                window.makeKeyAndOrderFront(nil)
-            }
+            return
+        }
+
+        let contentView = MainSettingsView(viewModel: FaceIDAppViewModel.shared)
+        let hostingController = NSHostingController(rootView: contentView)
+        let window = NSWindow(contentViewController: hostingController)
+        window.title = "Face ID 및 암호 (MacBook Air M2 · macOS Golden Gate)"
+        window.styleMask = [.titled, .closable, .miniaturizable]
+        window.isReleasedWhenClosed = false
+        window.delegate = self
+        window.center()
+        self.settingsWindow = window
+
+        window.makeKeyAndOrderFront(nil)
+        NSApplication.shared.activate(ignoringOtherApps: true)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        // 창을 닫는 즉시 SwiftUI 뷰 계층 메모리를 해제하여 백그라운드 리소스 점유율 최소화
+        settingsWindow?.contentViewController = nil
+        settingsWindow = nil
+        NSApplication.shared.setActivationPolicy(.accessory)
+    }
+}
+
+@MainActor
+final class MacFaceIDAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // 독(Dock)에 아이콘을 표시하지 않고 Touch ID 데몬처럼 순수 백그라운드로 동작
+        NSApplication.shared.setActivationPolicy(.accessory)
+        _ = FaceIDAppViewModel.shared
+
+        let isBackgroundLaunch = CommandLine.arguments.contains("--background")
+        if !isBackgroundLaunch {
+            SettingsWindowController.shared.showSettingsWindow()
         }
     }
 
-    var body: some Scene {
-        WindowGroup("Face ID 및 암호 (MacBook Air M2 · macOS Golden Gate)") {
-            MainSettingsView(viewModel: appViewModel)
-        }
-        .windowResizability(.contentSize)
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        // 사용자가 Finder / Launchpad / Spotlight에서 MacFaceID.app을 직접 실행(클릭)했을 때만 설정 창 표시
+        SettingsWindowController.shared.showSettingsWindow()
+        return true
+    }
 
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        // 설정 창을 닫아도 앱은 종료되지 않고 백그라운드(CPU 0%)에서 잠금 해제 대기 유지
+        return false
+    }
+}
+
+@main
+struct MacFaceIDApp: App {
+    @NSApplicationDelegateAdaptor(MacFaceIDAppDelegate.self) private var appDelegate
+    @ObservedObject private var appViewModel = FaceIDAppViewModel.shared
+
+    var body: some Scene {
         MenuBarExtra("Face ID", systemImage: "faceid") {
             VStack(alignment: .leading, spacing: 8) {
-                Text("MacFaceID (Golden Gate)")
+                Text("MacFaceID (백그라운드 활성)")
                     .font(.headline)
 
                 Divider()
+
+                Button("Face ID 및 암호 설정 열기...") {
+                    SettingsWindowController.shared.showSettingsWindow()
+                }
 
                 Button("지금 Face ID 인증 테스트") {
                     appViewModel.triggerLiveAuthTest()
                 }
 
                 Button("새 얼굴 등록 (Face ID 설정)...") {
+                    SettingsWindowController.shared.showSettingsWindow()
                     appViewModel.showingPrimaryEnrollment = true
                 }
 
@@ -95,6 +146,15 @@ final class FaceIDAppViewModel: ObservableObject {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(options)
 
+        Task {
+            // 잠금 화면 진입 전에 데스크탑에서 카메라 권한(TCC)을 미리 확보하고 실제 얼굴 벡터로 즉시 보정
+            let granted = await CameraCaptureService.shared.checkAndRequestPermission()
+            if granted {
+                _ = await controller.authenticateWithCamera(maxFramesToTry: 2)
+                reloadAll()
+            }
+        }
+
         if !store.hasUnlockCredential() {
             promptForUnlockPasswordModal()
         }
@@ -141,6 +201,7 @@ final class FaceIDAppViewModel: ObservableObject {
 
     func saveConfig() {
         try? store.saveConfiguration(config)
+        SystemIntegrationDaemon.shared.updateWalkAwayAutoLockTimer()
     }
 
     func triggerLiveAuthTest() {

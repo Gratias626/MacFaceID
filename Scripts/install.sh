@@ -29,6 +29,7 @@ cat > "$LAUNCH_AGENTS_DIR/com.macfaceid.goldengate.app.plist" <<EOF
     <key>ProgramArguments</key>
     <array>
         <string>/Applications/MacFaceID.app/Contents/MacOS/MacFaceID</string>
+        <string>--background</string>
     </array>
     <key>RunAtLoad</key>
     <true/>

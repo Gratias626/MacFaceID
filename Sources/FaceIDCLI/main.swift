@@ -94,6 +94,7 @@ struct FaceIDCLI {
             print("• 현재 사용자        : \(NSUserName())")
             print("• 등록된 프로필 수   : \(profiles.count)개 (기본 외모: \(profiles.filter { !$0.isAlternateAppearance }.count), 보조 외모: \(profiles.filter { $0.isAlternateAppearance }.count))")
             print("• 잠금화면 자격증명  : \(store.hasUnlockCredential() ? "등록됨 (Face ID + Touch ID + 키보드 병행 활성)" : "미등록")")
+            print("• 잠금화면 우선순위  : \(config.prioritizeFaceIDOnLockScreen ? "1순위 Face ID -> 2순위 Touch ID -> 3순위 암호" : "병렬 동시 대기")")
             print("• 화면 잠금 해제 연동: \(config.isEnabledForScreenUnlock ? "활성화 (ON)" : "비활성화 (OFF)")")
             print("• 터미널 sudo 연동   : \(config.isEnabledForSudo ? "활성화 (ON)" : "비활성화 (OFF)")")
             print("• 시선 주시 감지     : \(config.requireAttentionDetection ? "활성화 (ON)" : "비활성화 (OFF)")")

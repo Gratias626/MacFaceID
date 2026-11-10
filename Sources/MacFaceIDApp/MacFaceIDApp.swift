@@ -186,6 +186,10 @@ struct MainSettingsView: View {
                     Toggle("Mac 잠금 해제 (화면 깨우기 및 로그인 윈도우 SecurityAgent 연동)", isOn: $viewModel.config.isEnabledForScreenUnlock)
                         .onChange(of: viewModel.config.isEnabledForScreenUnlock) { _, _ in viewModel.saveConfig() }
 
+                    Toggle("잠금 화면에서 Touch ID·비밀번호보다 Face ID 최우선 작동 (1순위 선제 해제)", isOn: $viewModel.config.prioritizeFaceIDOnLockScreen)
+                        .disabled(!viewModel.config.isEnabledForScreenUnlock)
+                        .onChange(of: viewModel.config.prioritizeFaceIDOnLockScreen) { _, _ in viewModel.saveConfig() }
+
                     Toggle("터미널 sudo 및 관리자 권한 승격 (pam_faceid.so 연동)", isOn: $viewModel.config.isEnabledForSudo)
                         .onChange(of: viewModel.config.isEnabledForSudo) { _, _ in viewModel.saveConfig() }
 

@@ -12,6 +12,8 @@ public final class SystemIntegrationDaemon: @unchecked Sendable {
     private var workspaceObservers: [NSObjectProtocol] = []
     private var distributedObservers: [NSObjectProtocol] = []
     private var isScreenCurrentlyLocked: Bool = false
+    private var isScanningLockScreen: Bool = false
+    private var lockScreenPriorityTimer: Timer?
     public var onAuthStateChanged: ((AuthenticationState) -> Void)?
 
     public init(
@@ -48,15 +50,17 @@ public final class SystemIntegrationDaemon: @unchecked Sendable {
 
         workspaceObservers.append(contentsOf: [wakeObserver, screenWakeObserver])
 
-        // 3. macOS 화면 잠금/해제 DistributedNotification 감지 (Touch ID & 키보드 암호 병행 연동)
+        // 3. macOS 화면 잠금/해제 DistributedNotification 감지 (Face ID 1순위 최우선 + Touch ID/암호 후순위 폴백)
         let distCenter = DistributedNotificationCenter.default()
         let lockObserver = distCenter.addObserver(
             forName: NSNotification.Name("com.apple.screenIsLocked"),
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.isScreenCurrentlyLocked = true
-            self?.onAuthStateChanged?(.idle)
+            guard let self = self else { return }
+            self.isScreenCurrentlyLocked = true
+            self.onAuthStateChanged?(.idle)
+            self.startLockScreenPriorityMonitor()
         }
 
         // 사용자가 Touch ID 또는 키보드 암호 직접 입력으로 잠금을 해제한 경우 -> 즉시 보안 정책 카운터(5회 실패/48시간 타이머) 리셋
@@ -67,6 +71,7 @@ public final class SystemIntegrationDaemon: @unchecked Sendable {
         ) { [weak self] _ in
             guard let self = self else { return }
             self.isScreenCurrentlyLocked = false
+            self.stopLockScreenPriorityMonitor()
             self.authController.resetSecurityPolicyAfterPasswordUnlock()
         }
         distributedObservers.append(contentsOf: [lockObserver, unlockObserver])
@@ -75,16 +80,41 @@ public final class SystemIntegrationDaemon: @unchecked Sendable {
         startWalkAwayAutoLockTimerIfNeeded()
     }
 
-    /// 잠금 화면에서 Touch ID 및 키보드 암호 입력창을 그대로 활성화한 채 백그라운드에서 병렬로 Face ID 인증 수행
+    /// 잠금 화면이 활성화된 동안 사용자 접근(키보드 깨우기/트랙패드 이동) 시 Touch ID·암호 입력보다 먼저 Face ID를 1순위로 즉시 실행
+    private func startLockScreenPriorityMonitor() {
+        stopLockScreenPriorityMonitor()
+        let config = store.loadConfiguration()
+        guard config.isEnabledForScreenUnlock && config.prioritizeFaceIDOnLockScreen else { return }
+
+        lockScreenPriorityTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            guard self.isMacScreenLocked(), !self.isScanningLockScreen else { return }
+            // 잠금 화면에서 마우스 이동이나 키 입력 등 깨우기 신호가 감지되면 즉시 Face ID를 최우선 실행
+            let idleSeconds = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .null)
+            if idleSeconds < 1.2 {
+                self.triggerParallelFaceIDUnlockIfNeeded()
+            }
+        }
+    }
+
+    private func stopLockScreenPriorityMonitor() {
+        lockScreenPriorityTimer?.invalidate()
+        lockScreenPriorityTimer = nil
+    }
+
+    /// 잠금 화면에서 Touch ID 및 비밀번호 입력보다 Face ID를 1순위로 선제 수행하고, 미인식 시에만 Touch ID/비밀번호로 폴백
     private func triggerParallelFaceIDUnlockIfNeeded() {
         let config = store.loadConfiguration()
-        guard config.isEnabledForScreenUnlock else { return }
-        Task {
+        guard config.isEnabledForScreenUnlock, !isScanningLockScreen else { return }
+        isScanningLockScreen = true
+
+        Task(priority: .high) {
+            defer { self.isScanningLockScreen = false }
             self.onAuthStateChanged?(.scanning)
-            let result = await self.authController.authenticateWithCamera()
+            let result = await self.authController.authenticateWithCamera(maxFramesToTry: 3)
             self.onAuthStateChanged?(result)
             if case .authenticated = result {
-                self.submitUnlockCredentialIfScreenLockedAndIdle()
+                self.submitUnlockCredentialIfScreenLockedAndIdle(prioritizeFaceID: config.prioritizeFaceIDOnLockScreen)
             }
         }
     }
@@ -101,15 +131,33 @@ public final class SystemIntegrationDaemon: @unchecked Sendable {
         return false
     }
 
-    /// 사용자가 키보드를 직접 타이핑 중이 아니고 화면이 잠겨 있을 때만 저장된 암호화 자격증명으로 잠금 화면 자동 해제
-    private func submitUnlockCredentialIfScreenLockedAndIdle() {
+    /// 잠금 화면에서 Face ID 인증 성공 시 최우선으로 암호 입력창을 비우고 자격증명을 주입하여 즉시 잠금 해제
+    private func submitUnlockCredentialIfScreenLockedAndIdle(prioritizeFaceID: Bool = true) {
         guard isMacScreenLocked() else { return }
-        // 최근 2.0초 이내 키보드 입력이 있었다면 사용자가 직접 암호를 입력 중이므로 간섭하지 않음
-        let secondsSinceKeyPress = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .keyDown)
-        guard secondsSinceKeyPress > 2.0 else { return }
+        if !prioritizeFaceID {
+            // 최우선 모드가 꺼져 있을 때만 수동 키보드 타이핑 중(2.0초 이내) 여부를 확인해 양보
+            let secondsSinceKeyPress = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .keyDown)
+            guard secondsSinceKeyPress > 2.0 else { return }
+        }
         guard let password = store.loadUnlockCredential(), !password.isEmpty else { return }
 
         guard let source = CGEventSource(stateID: .hidSystemState) else { return }
+
+        // 1순위 Face ID 최우선 모드: 화면을 깨우기 위해 누른 키나 입력 중이던 잔여 글자를 전체 선택(Cmd+A) 후 삭제(Delete)하여 충돌 방지
+        if prioritizeFaceID {
+            if let selectAllDown = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
+               let selectAllUp = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false),
+               let deleteDown = CGEvent(keyboardEventSource: source, virtualKey: 51, keyDown: true),
+               let deleteUp = CGEvent(keyboardEventSource: source, virtualKey: 51, keyDown: false) {
+                selectAllDown.flags = .maskCommand
+                selectAllUp.flags = .maskCommand
+                selectAllDown.post(tap: .cghidEventTap)
+                selectAllUp.post(tap: .cghidEventTap)
+                deleteDown.post(tap: .cghidEventTap)
+                deleteUp.post(tap: .cghidEventTap)
+            }
+        }
+
         let utf16Chars = Array(password.utf16)
         if let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
            let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) {
@@ -118,12 +166,13 @@ public final class SystemIntegrationDaemon: @unchecked Sendable {
             keyDown.post(tap: .cghidEventTap)
             keyUp.post(tap: .cghidEventTap)
         }
-        // Return 키 전송 (virtualKey 36)
+        // Return 키 전송 (virtualKey 36) -> 잠금 화면 즉시 해제
         if let retDown = CGEvent(keyboardEventSource: source, virtualKey: 36, keyDown: true),
            let retUp = CGEvent(keyboardEventSource: source, virtualKey: 36, keyDown: false) {
             retDown.post(tap: .cghidEventTap)
             retUp.post(tap: .cghidEventTap)
         }
+        stopLockScreenPriorityMonitor()
     }
 
     private var walkAwayTimer: Timer?

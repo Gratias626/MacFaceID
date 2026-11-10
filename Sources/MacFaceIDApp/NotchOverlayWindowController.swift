@@ -33,7 +33,8 @@ public final class NotchOverlayWindowController {
             newPanel.isOpaque = false
             newPanel.backgroundColor = .clear
             newPanel.hasShadow = false
-            newPanel.level = .statusBar
+            // 잠금 화면(ScreenSaver/LockScreen) 레이어 위에서도 1순위로 표시되도록 최상위 윈도우 레벨 적용
+            newPanel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.screenSaverWindow)) + 1)
             newPanel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
             newPanel.ignoresMouseEvents = true
             self.panel = newPanel

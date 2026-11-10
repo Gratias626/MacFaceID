@@ -147,6 +147,7 @@ public enum FallbackReason: String, Codable, Sendable {
 /// Face ID 환경설정 모델
 public struct FaceIDConfiguration: Codable, Sendable {
     public var isEnabledForScreenUnlock: Bool
+    public var prioritizeFaceIDOnLockScreen: Bool
     public var isEnabledForSudo: Bool
     public var requireAttentionDetection: Bool
     public var enableLowLightScreenAssist: Bool
@@ -156,6 +157,7 @@ public struct FaceIDConfiguration: Codable, Sendable {
 
     public init(
         isEnabledForScreenUnlock: Bool = true,
+        prioritizeFaceIDOnLockScreen: Bool = true,
         isEnabledForSudo: Bool = true,
         requireAttentionDetection: Bool = true,
         enableLowLightScreenAssist: Bool = true,
@@ -164,6 +166,7 @@ public struct FaceIDConfiguration: Codable, Sendable {
         maxFailureAttempts: Int = 5
     ) {
         self.isEnabledForScreenUnlock = isEnabledForScreenUnlock
+        self.prioritizeFaceIDOnLockScreen = prioritizeFaceIDOnLockScreen
         self.isEnabledForSudo = isEnabledForSudo
         self.requireAttentionDetection = requireAttentionDetection
         self.enableLowLightScreenAssist = enableLowLightScreenAssist

@@ -28,20 +28,21 @@ sudo cp -R "$DIST_DIR/AuthPlugin/FaceIDAuthPlugin.bundle" /Library/Security/Secu
 sudo cp -R "$DIST_DIR/MacFaceID.app" /Applications/
 
 if [ -f /etc/pam.d/sudo_local ]; then
-    if ! grep -q "pam_faceid.so" /etc/pam.d/sudo_local; then
-        echo "auth       sufficient     /usr/local/lib/pam/pam_faceid.so" | sudo tee -a /etc/pam.d/sudo_local > /dev/null
-    fi
+    sudo sed -i '' '/pam_faceid.so/d' /etc/pam.d/sudo_local
+    sudo cp /etc/pam.d/sudo_local /etc/pam.d/sudo_local.bak
+    # pam_tid.so(Touch ID) 및 암호 입력보다 항상 최상단(1순위)에 pam_faceid.so 배치
+    sudo awk 'NR==1{print "auth       sufficient     /usr/local/lib/pam/pam_faceid.so"}1' /etc/pam.d/sudo_local.bak | sudo tee /etc/pam.d/sudo_local > /dev/null
 else
-    echo "# sudo_local: local customizations for sudo (Face ID + Touch ID + Password)" | sudo tee /etc/pam.d/sudo_local > /dev/null
+    echo "# sudo_local: 1st Priority Face ID -> 2nd Touch ID -> 3rd Password" | sudo tee /etc/pam.d/sudo_local > /dev/null
     echo "auth       sufficient     /usr/local/lib/pam/pam_faceid.so" | sudo tee -a /etc/pam.d/sudo_local > /dev/null
     echo "auth       sufficient     pam_tid.so" | sudo tee -a /etc/pam.d/sudo_local > /dev/null
 fi
 
 if [ -f /etc/pam.d/screensaver ]; then
-    if ! grep -q "pam_faceid.so" /etc/pam.d/screensaver; then
-        sudo cp /etc/pam.d/screensaver /etc/pam.d/screensaver.bak
-        sudo awk 'NR==1{print; print "auth       sufficient     /usr/local/lib/pam/pam_faceid.so"; next}1' /etc/pam.d/screensaver.bak | sudo tee /etc/pam.d/screensaver > /dev/null
-    fi
+    sudo sed -i '' '/pam_faceid.so/d' /etc/pam.d/screensaver
+    sudo cp /etc/pam.d/screensaver /etc/pam.d/screensaver.bak
+    # 잠금 화면(screensaver) PAM에서도 Touch ID 및 암호 입력보다 항상 1순위로 pam_faceid.so 배치
+    sudo awk 'NR==1{print; print "auth       sufficient     /usr/local/lib/pam/pam_faceid.so"; next}1' /etc/pam.d/screensaver.bak | sudo tee /etc/pam.d/screensaver > /dev/null
 fi
 
 echo "✅ MacFaceID 설치가 완료되었습니다! 이제 터미널 sudo 및 잠금 해제 시 Face ID가 작동합니다."
